@@ -119,6 +119,13 @@ enum RecipeStatus {
   ARCHIVED
 }
 
+enum RecipeDifficulty {
+  EASY
+  MEDIUM
+  HARD
+  EXPERT
+}
+
 enum WorkflowRunStatus {
   PLANNED
   RUNNING
@@ -253,6 +260,7 @@ model User {
   workflowRunEvents WorkflowRunEvent[] @relation("WorkflowEventActor")
   notificationPreference UserNotificationPreference?
   acknowledgedWebhookAlerts WebhookFailureAlert[] @relation("WebhookAlertAcknowledger")
+  recipeViewEvents RecipeViewEvent[]
 
   @@index([status])
   @@index([createdAt])
@@ -582,6 +590,8 @@ model Recipe {
   code                String          @unique @db.VarChar(50)
   name                String          @db.VarChar(140)
   description         String?         @db.Text
+  cuisineTags         String[]        @default([])
+  difficulty          RecipeDifficulty @default(MEDIUM)
   yieldAmount         Decimal?        @db.Decimal(10, 2)
   yieldUnit           String?         @db.VarChar(30)
   prepTimeSeconds     Int?
@@ -596,8 +606,24 @@ model Recipe {
   author              User?           @relation("RecipeAuthor", fields: [authorId], references: [id], onDelete: SetNull)
   steps               RecipeStep[]
   workflowRuns        WorkflowRun[]
+  viewEvents          RecipeViewEvent[]
 
   @@index([status])
+}
+
+model RecipeViewEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  recipeId    String   @db.Uuid
+  userId      String?  @db.Uuid
+  sessionId   String?  @db.VarChar(100)
+  viewedAt    DateTime @default(now())
+  createdAt   DateTime @default(now())
+  recipe      Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([recipeId, viewedAt])
+  @@index([userId, viewedAt])
+  @@index([sessionId, viewedAt])
 }
 
 model RecipeStep {

@@ -2,10 +2,14 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+COPY frontend/package.json ./frontend/package.json
 
-COPY . .
+RUN npm ci --workspace frontend --include-workspace-root=false
+
+COPY frontend ./frontend
+
+WORKDIR /app/frontend
 
 EXPOSE 5173
 

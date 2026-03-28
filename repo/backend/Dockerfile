@@ -1,18 +1,18 @@
-FROM node:20-alpine AS base
+FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY prisma ./prisma
+COPY package.json package-lock.json ./
+COPY backend/package.json ./backend/package.json
 
-RUN npm install
-RUN npx prisma generate
+RUN npm ci --workspace backend --include-workspace-root=false
 
-COPY tsconfig.json ./
-COPY src ./src
+COPY backend ./backend
+
+WORKDIR /app/backend
 
 RUN npm run build
 
 EXPOSE 4000
 
-CMD ["npm", "run", "start"]
+CMD ["npm", "run", "start:docker"]

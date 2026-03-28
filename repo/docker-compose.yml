@@ -1,35 +1,29 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: culinary_postgres
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-culinary_studio}
-      POSTGRES_USER: ${POSTGRES_USER:-culinary_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-culinary_password}
+    env_file:
+      - ./.env.qa
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    expose:
-      - "5432"
+      - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-culinary_user} -d ${POSTGRES_DB:-culinary_studio}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
     networks:
       - app_net
 
   redis:
     image: redis:7-alpine
-    container_name: culinary_redis
     restart: unless-stopped
+    env_file:
+      - ./.env.qa
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
-    expose:
-      - "6379"
+      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -42,49 +36,57 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: culinary_backend
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
-    environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      BACKEND_PORT: ${BACKEND_PORT:-4000}
-      BACKEND_HOST: ${BACKEND_HOST:-0.0.0.0}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://culinary_user:culinary_password@postgres:5432/culinary_studio?schema=public}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access_secret}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh_secret}
-      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
-      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+    env_file:
+      - ./.env.qa
     ports:
-      - "${BACKEND_PORT:-4000}:4000"
-    expose:
-      - "4000"
+      - "4000:4000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     networks:
       - app_net
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: culinary_frontend
+      context: .
+      dockerfile: frontend/Dockerfile
     restart: unless-stopped
-    environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
-      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://backend:4000}
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    env_file:
+      - ./.env.qa
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
-    expose:
-      - "5173"
+      - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5173').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     networks:
       - app_net
 

@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 
 import { AUTH_COOKIE_NAME } from './modules/auth/auth.constants';
 import { authRoutes } from './modules/auth/auth.routes';
+import { analyticsRoutes } from './modules/analytics/analytics.routes';
 import { billingRoutes } from './modules/billing/billing.routes';
 import { bookingRoutes } from './modules/bookings/booking.routes';
 import { notificationRoutes } from './modules/notifications/notification.routes';
@@ -36,6 +37,7 @@ export function buildApp() {
   app.addHook('onSend', idempotencyMiddleware.onSend);
 
   app.register(authRoutes, { prefix: '/auth' });
+  app.register(analyticsRoutes, { prefix: '/analytics' });
   app.register(billingRoutes, { prefix: '/billing' });
   app.register(bookingRoutes, { prefix: '/bookings' });
   app.register(notificationRoutes, { prefix: '/notifications' });

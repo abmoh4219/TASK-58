@@ -29,24 +29,34 @@ Initial fullstack monorepo scaffold for an offline/LAN-capable platform.
 
 ## Quick Start
 
-1. Copy environment template:
-
-```bash
-cp .env.example .env
-```
-
-2. Build and run all services:
+Run the full QA stack with a single command:
 
 ```bash
 docker compose up --build
 ```
 
-3. Access services:
+This starts PostgreSQL, Redis, backend, and frontend; backend startup automatically runs `prisma migrate deploy`, optional QA seed (enabled in `.env.qa`), and then serves traffic.
+
+Access services:
 
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:4000`
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`
+
+## QA Environment Wiring
+
+QA uses only Docker Compose. Environment variables are wired through committed `.env.qa` via `env_file` in `docker-compose.yml`, so no manual `cp .env.example .env`, no local npm install, and no manual migration commands are required for the default review path.
+
+## QA Login
+
+- API base URL: `http://localhost:4000`
+- Frontend URL: `http://localhost:5173`
+- Admin login (username/email): `qa.admin@culinary.local`
+- Admin password: `QaAdminPass123!`
+- Member login (username/email): `qa.member@culinary.local`
+- Member password: `QaMemberPass123!`
+- Seed behavior: enabled by default with `SEED=1` in `.env.qa`; can be disabled by setting `SEED=0`.
 
 ## LAN / Offline Notes
 
@@ -87,6 +97,8 @@ This scaffold is HTTP-first for local development, but it is ready to be fronted
 - Workflow run events/rollback migration: `backend/prisma/migrations/20260329000000_workflow_run_events_rollback/migration.sql`
 - Notifications scenarios/preferences migration: `backend/prisma/migrations/20260329013000_notifications_scenarios_preferences/migration.sql`
 - Webhook failure alerts/ack migration: `backend/prisma/migrations/20260329023000_webhook_failure_alerts_ack/migration.sql`
+- Recipe analytics views/cuisines migration: `backend/prisma/migrations/20260329034500_recipe_analytics_views_and_cuisines/migration.sql`
+- Recipe difficulty for analytics migration: `backend/prisma/migrations/20260329043000_recipe_difficulty_for_analytics/migration.sql`
 - Run local dev migration from `backend/`:
 
 ```bash
@@ -344,3 +356,58 @@ npm run prisma:migrate:dev
 - Admin APIs:
   - `GET /webhooks/failure-alerts` (filter by status/config/event/time)
   - `POST /webhooks/failure-alerts/:alertId/ack`
+
+## Analytics (Part 1)
+
+- Source definitions:
+  - Recipe view volume source: durable `RecipeViewEvent` rows (`POST /analytics/recipes/:recipeId/views`).
+  - Cuisine interest source: recipe-view events weighted by `Recipe.cuisineTags`.
+- APIs:
+  - `POST /analytics/recipes/:recipeId/views`
+  - `GET /analytics/recipes/view-volume?from=<iso>&to=<iso>&limit=<int>`
+  - `GET /analytics/recipes/cuisine-interest?from=<iso>&to=<iso>&limit=<int>`
+- Date range and timezone policy:
+  - `from`/`to` are interpreted as UTC instants.
+  - Drill-down daily buckets are grouped by UTC calendar day.
+  - If omitted, range defaults to last 30 days ending at now.
+- Cuisine distribution dimension:
+  - view-weighted by recipe tags.
+  - a view contributes total weight 1 split equally across all tags on that recipe.
+  - recipes without tags contribute to `uncategorized`.
+
+## Analytics (Part 2)
+
+- Weekly consistency streaks endpoint:
+  - `GET /analytics/workflows/weekly-streaks?from=<iso>&to=<iso>&userId=<optional>`
+  - Streak rule: at least one `COMPLETED` workflow run in a UTC calendar week.
+- Difficulty progression endpoint:
+  - `GET /analytics/workflows/difficulty-progression?from=<iso>&to=<iso>&userId=<optional>`
+  - Uses recipe difficulty metadata from completed workflow runs.
+  - Score mapping: `EASY=1`, `MEDIUM=2`, `HARD=3`, `EXPERT=4`.
+- Completion accuracy endpoint:
+  - `GET /analytics/workflows/completion-accuracy?from=<iso>&to=<iso>&userId=<optional>`
+  - Breakdown source: workflow event records (`STEP_COMPLETED`, `STEP_SKIPPED`, `STEP_ROLLBACK`).
+- Date range contract:
+  - Same as part 1: UTC instants for `from`/`to`; UTC daily/weekly drill-down buckets.
+
+## Analytics (Part 3)
+
+- Permissioned CSV export endpoint:
+  - `GET /analytics/exports/:dataset.csv?from=<iso>&to=<iso>&userId=<optional>`
+  - authorized role: `ADMIN`
+- Local file behavior chosen:
+  - API returns CSV as attachment download (`Content-Disposition`) and streams response from server memory stream.
+  - no direct write to arbitrary local filesystem paths.
+- Export audit:
+  - each export writes an `AuditLog` record with action `EXPORT`, dataset, range, user scope, format, and row count.
+- Exportable datasets (composed from 8.1–8.2):
+  - `recipe_view_volume` columns:
+    - `recipe_id, recipe_code, recipe_name, cuisine_tags, views, unique_users, unique_sessions`
+  - `cuisine_interest` columns:
+    - `cuisine_tag, weighted_views, percentage`
+  - `weekly_streaks` columns:
+    - `week_start_utc, has_completion`
+  - `difficulty_progression` columns:
+    - `day_utc, completed_runs, avg_difficulty_score, primary_difficulty, easy_count, medium_count, hard_count, expert_count`
+  - `completion_accuracy` columns:
+    - `day_utc, completed, skipped, rolled_back, completed_pct, skipped_pct, rolled_back_pct`

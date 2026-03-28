@@ -7,6 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "npm run prisma:generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "start:docker": "sh ./scripts/docker-entrypoint.sh",
+    "seed:qa": "node prisma/seed.qa.cjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy"
@@ -22,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
+    "effect": "^3.18.4",
     "prisma": "^6.6.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
