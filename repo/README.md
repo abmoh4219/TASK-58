@@ -85,6 +85,8 @@ This scaffold is HTTP-first for local development, but it is ready to be fronted
 - Workflow recipe cue migration: `backend/prisma/migrations/20260328214500_workflow_recipe_cues/migration.sql`
 - Workflow run timers/pause migration: `backend/prisma/migrations/20260328230000_workflow_run_timers_pause_resume/migration.sql`
 - Workflow run events/rollback migration: `backend/prisma/migrations/20260329000000_workflow_run_events_rollback/migration.sql`
+- Notifications scenarios/preferences migration: `backend/prisma/migrations/20260329013000_notifications_scenarios_preferences/migration.sql`
+- Webhook failure alerts/ack migration: `backend/prisma/migrations/20260329023000_webhook_failure_alerts_ack/migration.sql`
 - Run local dev migration from `backend/`:
 
 ```bash
@@ -275,3 +277,70 @@ npm run prisma:migrate:dev
 - Analytics read endpoint:
   - `GET /workflows/events?runId=&userId=&stepId=&types=&from=&to=&limit=`
   - supports filtering by user, run, time window, step, and event type list
+
+## Notifications (Part 1)
+
+- Supported notification scenarios:
+  - `BOOKING_SUCCESS`
+  - `SCHEDULE_CHANGE`
+  - `CANCELLATION`
+  - `WAITLIST_PROMOTION`
+  - `CLASS_REMINDER`
+- Mute controls scope:
+  - per-user global mute (`globalMuted`)
+  - per-user category mute list (`mutedCategories[]`)
+- Notification APIs:
+  - `POST /notifications/events` (create scenario event + queue/deliver flow)
+  - `POST /notifications/dispatch-due` (admin-triggered delivery of queued due notifications)
+  - `GET /notifications/history` (durable history query)
+  - `GET /notifications/preferences`
+  - `PUT /notifications/preferences`
+- Booking integration hooks (automatic creates):
+  - booking success
+  - schedule change (reschedule)
+  - cancellation
+  - waitlist promotion
+  - class reminder scheduling endpoint: `POST /bookings/:bookingId/reminders`
+
+## Webhooks (Part 2)
+
+- Local integration/configuration APIs:
+  - `GET /webhooks/configs`
+  - `POST /webhooks/configs`
+  - `PUT /webhooks/configs/:configId`
+  - `POST /webhooks/emit` (generic event outbox enqueue)
+  - `POST /webhooks/dispatch-due` (process due queue)
+  - `GET /webhooks/logs`
+- Local development subscriber URL support:
+  - local URLs (`localhost`, `127.0.0.1`, `host.docker.internal`, `*.local`) are allowed when `WEBHOOK_ALLOW_LOCAL_TARGETS=true`.
+  - non-local targets must use HTTPS.
+- Outbound HMAC signing:
+  - algorithm: `HMAC-SHA256`
+  - signed string: `${timestamp}.${rawJsonBody}`
+  - headers:
+    - `x-webhook-id`
+    - `x-webhook-event`
+    - `x-webhook-timestamp`
+    - `x-webhook-signature` (`sha256=<hex>`)
+    - `x-webhook-signature-version` (`v1`)
+    - `x-webhook-key-id`
+  - receiver clock/skew notes are documented inline in webhook sender code.
+- Retry + dead-letter behavior:
+  - transient failures (`network`, `408`, `429`, `5xx`) retry with exponential backoff (`WEBHOOK_RETRY_BASE_SECONDS`, `WEBHOOK_RETRY_MAX_SECONDS`) up to config `maxRetries`.
+  - permanent failures (`4xx`) or exhausted retries are marked `DEAD_LETTER` in `WebhookLog`.
+- Dispatch wiring:
+  - booking/waitlist events enqueue webhook outbox records.
+  - generic outbox pattern is also available via `POST /webhooks/emit` for other flows.
+
+## Notifications/Webhooks Ops (Part 3)
+
+- Failure alert generation behavior:
+  - open admin alert when a delivery becomes `DEAD_LETTER`.
+  - open admin alert when retry attempts reach threshold (`WEBHOOK_FAILURE_ALERT_THRESHOLD_ATTEMPTS`, default `3`).
+  - if an open alert already exists for the same webhook config + event key, it is updated (failure count/time), not duplicated.
+- Visible failure tracking:
+  - persistent `WebhookFailureAlert` records remain `OPEN` until acknowledged.
+  - admin notification entries are generated for new open alerts (`NotificationScenario.WEBHOOK_FAILURE`).
+- Admin APIs:
+  - `GET /webhooks/failure-alerts` (filter by status/config/event/time)
+  - `POST /webhooks/failure-alerts/:alertId/ack`

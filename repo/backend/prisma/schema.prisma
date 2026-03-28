@@ -159,6 +159,15 @@ enum NotificationStatus {
   CANCELED
 }
 
+enum NotificationScenario {
+  BOOKING_SUCCESS
+  SCHEDULE_CHANGE
+  CANCELLATION
+  WAITLIST_PROMOTION
+  CLASS_REMINDER
+  WEBHOOK_FAILURE
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -179,6 +188,16 @@ enum WebhookDeliveryStatus {
   PENDING
   SUCCESS
   FAILED
+  DEAD_LETTER
+}
+
+enum WebhookFailureAlertStatus {
+  OPEN
+  ACKNOWLEDGED
+}
+
+enum WebhookFailureTriggerType {
+  RETRY_THRESHOLD
   DEAD_LETTER
 }
 
@@ -232,6 +251,8 @@ model User {
   membershipEnrollments MembershipEnrollment[]
   creditPackGrants CreditPackGrant[]
   workflowRunEvents WorkflowRunEvent[] @relation("WorkflowEventActor")
+  notificationPreference UserNotificationPreference?
+  acknowledgedWebhookAlerts WebhookFailureAlert[] @relation("WebhookAlertAcknowledger")
 
   @@index([status])
   @@index([createdAt])
@@ -673,6 +694,7 @@ model WorkflowRunEvent {
 model Notification {
   id                    String             @id @default(uuid()) @db.Uuid
   userId                String?            @db.Uuid
+  scenario              NotificationScenario
   channel               NotificationChannel
   status                NotificationStatus @default(QUEUED)
   templateKey           String?            @db.VarChar(80)
@@ -694,6 +716,17 @@ model Notification {
   @@index([userId, createdAt])
   @@index([status, scheduledFor])
   @@index([channel, status, createdAt])
+  @@index([scenario, createdAt])
+}
+
+model UserNotificationPreference {
+  id              String                 @id @default(uuid()) @db.Uuid
+  userId          String                 @unique @db.Uuid
+  globalMuted     Boolean                @default(false)
+  mutedCategories NotificationScenario[] @default([])
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model AuditLog {
@@ -737,6 +770,7 @@ model WebhookConfig {
   updatedAt               DateTime      @updatedAt
   createdBy               User?         @relation("WebhookCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   logs                    WebhookLog[]
+  failureAlerts           WebhookFailureAlert[]
 
   @@index([eventKey, status])
   @@index([endpointHash])
@@ -760,10 +794,35 @@ model WebhookLog {
   respondedAt            DateTime?
   createdAt              DateTime              @default(now())
   webhookConfig          WebhookConfig         @relation(fields: [webhookConfigId], references: [id], onDelete: Cascade)
+  failureAlerts          WebhookFailureAlert[]
 
   @@index([webhookConfigId, requestedAt])
   @@index([deliveryStatus, requestedAt])
   @@index([eventKey, deliveryStatus, requestedAt])
+}
+
+model WebhookFailureAlert {
+  id               String                    @id @default(uuid()) @db.Uuid
+  webhookConfigId  String                    @db.Uuid
+  latestWebhookLogId String?                 @db.Uuid
+  eventKey         String                    @db.VarChar(80)
+  status           WebhookFailureAlertStatus @default(OPEN)
+  triggerType      WebhookFailureTriggerType
+  failureCount     Int                       @default(1)
+  firstFailedAt    DateTime
+  lastFailedAt     DateTime
+  lastErrorMessage String?                   @db.VarChar(255)
+  acknowledgedByUserId String?               @db.Uuid
+  acknowledgedAt   DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  webhookConfig    WebhookConfig             @relation(fields: [webhookConfigId], references: [id], onDelete: Cascade)
+  latestWebhookLog WebhookLog?               @relation(fields: [latestWebhookLogId], references: [id], onDelete: SetNull)
+  acknowledgedBy   User?                     @relation("WebhookAlertAcknowledger", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, updatedAt])
+  @@index([webhookConfigId, status])
+  @@index([eventKey, status])
 }
 
 model SignedRequestReplay {
