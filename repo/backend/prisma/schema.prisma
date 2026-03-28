@@ -7,3 +7,702 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  ARCHIVED
+}
+
+enum MembershipPlanStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+enum CreditPackStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+enum WalletStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum WalletTransactionType {
+  CREDIT
+  DEBIT
+  ADJUSTMENT
+  REFUND
+}
+
+enum PriceBookStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOID
+  REFUNDED
+}
+
+enum InvoiceLineType {
+  MEMBERSHIP_PLAN
+  CREDIT_PACK
+  BOOKING
+  WALLET_TOP_UP
+  MANUAL
+  DISCOUNT
+}
+
+enum PaymentMethod {
+  CASH
+  CHECK
+  MANUAL_CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  VOIDED
+  REFUNDED
+}
+
+enum DiscountScope {
+  INVOICE
+  INVOICE_LINE
+}
+
+enum DiscountValueType {
+  PERCENT
+  FIXED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+  NO_SHOW
+}
+
+enum BookingSource {
+  STAFF
+  WEB
+  PHONE
+  IMPORT
+}
+
+enum WaitlistStatus {
+  WAITING
+  OFFERED
+  CONVERTED
+  EXPIRED
+  REMOVED
+}
+
+enum RecipeStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum WorkflowRunStatus {
+  PLANNED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum WorkflowRunStepStatus {
+  PENDING
+  READY
+  RUNNING
+  COMPLETED
+  SKIPPED
+  FAILED
+  CANCELED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  WEBHOOK
+  INTERNAL
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  CANCELED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+  MANUAL
+}
+
+enum WebhookStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  DEAD_LETTER
+}
+
+model User {
+  id              String      @id @default(uuid()) @db.Uuid
+  username        String      @unique @db.VarChar(50)
+  displayName     String      @db.VarChar(120)
+  emailHash       String      @unique @db.VarChar(128)
+  emailCiphertext String?     @db.Text
+  emailIv         String?     @db.VarChar(64)
+  phoneHash       String?     @unique @db.VarChar(128)
+  phoneCiphertext String?     @db.Text
+  phoneIv         String?     @db.VarChar(64)
+  passwordHash    String?     @db.VarChar(255)
+  status          UserStatus  @default(ACTIVE)
+  lastLoginAt     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  roles           UserRole[]
+  wallets         Wallet[]
+  invoices        Invoice[]   @relation("InvoiceCustomer")
+  paymentsHandled Payment[]   @relation("PaymentRecorder")
+  discountsMade   DiscountOverride[] @relation("DiscountCreator")
+  discountsApproved DiscountOverride[] @relation("DiscountApprover")
+  bookings        Booking[]   @relation("BookingCustomer")
+  createdBookings Booking[]   @relation("BookingCreator")
+  waitlistEntries Waitlist[]
+  recipesAuthored Recipe[]    @relation("RecipeAuthor")
+  workflowRunsOperated WorkflowRun[] @relation("WorkflowOperator")
+  notifications   Notification[]
+  auditLogs       AuditLog[]          @relation("AuditActor")
+  webhookConfigs  WebhookConfig[]     @relation("WebhookCreator")
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Role {
+  id          String    @id @default(uuid()) @db.Uuid
+  code        String    @unique @db.VarChar(50)
+  name        String    @unique @db.VarChar(100)
+  description String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  users       UserRole[]
+}
+
+model UserRole {
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  assignedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model MembershipPlan {
+  id                  String               @id @default(uuid()) @db.Uuid
+  code                String               @unique @db.VarChar(50)
+  name                String               @db.VarChar(120)
+  description         String?              @db.Text
+  durationDays        Int
+  includedCredits     Int                  @default(0)
+  status              MembershipPlanStatus @default(DRAFT)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  priceBookItems      PriceBookItem[]
+
+  @@index([status])
+}
+
+model CreditPack {
+  id                  String             @id @default(uuid()) @db.Uuid
+  code                String             @unique @db.VarChar(50)
+  name                String             @db.VarChar(120)
+  description         String?            @db.Text
+  creditsAmount       Int
+  expiresInDays       Int?
+  status              CreditPackStatus   @default(DRAFT)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  priceBookItems      PriceBookItem[]
+
+  @@index([status])
+}
+
+model Wallet {
+  id                  String      @id @default(uuid()) @db.Uuid
+  userId              String      @db.Uuid
+  currency            String      @default("USD") @db.Char(3)
+  status              WalletStatus @default(ACTIVE)
+  availableBalance    Decimal     @default(0) @db.Decimal(12, 2)
+  reservedBalance     Decimal     @default(0) @db.Decimal(12, 2)
+  labelCiphertext     String?     @db.Text
+  labelIv             String?     @db.VarChar(64)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  user                User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  transactions        WalletTransaction[]
+
+  @@unique([userId, currency])
+  @@index([status])
+}
+
+model WalletTransaction {
+  id                  String               @id @default(uuid()) @db.Uuid
+  walletId            String               @db.Uuid
+  type                WalletTransactionType
+  amount              Decimal              @db.Decimal(12, 2)
+  currency            String               @db.Char(3)
+  referenceType       String?              @db.VarChar(50)
+  referenceId         String?              @db.Uuid
+  memoCiphertext      String?              @db.Text
+  memoIv              String?              @db.VarChar(64)
+  occurredAt          DateTime             @default(now())
+  createdAt           DateTime             @default(now())
+  wallet              Wallet               @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  payment             Payment?
+
+  @@index([walletId, occurredAt])
+  @@index([referenceType, referenceId])
+}
+
+model PriceBook {
+  id                  String           @id @default(uuid()) @db.Uuid
+  code                String           @db.VarChar(50)
+  version             Int
+  name                String           @db.VarChar(120)
+  currency            String           @default("USD") @db.Char(3)
+  status              PriceBookStatus  @default(DRAFT)
+  validFrom           DateTime
+  validTo             DateTime?
+  publishedAt         DateTime?
+  supersededById      String?          @db.Uuid
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  items               PriceBookItem[]
+  supersededBy        PriceBook?       @relation("PriceBookSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  previousVersions    PriceBook[]      @relation("PriceBookSupersession")
+  invoices            Invoice[]
+  bookings            Booking[]
+
+  @@unique([code, version])
+  @@index([status, validFrom, validTo])
+}
+
+model PriceBookItem {
+  id                  String          @id @default(uuid()) @db.Uuid
+  priceBookId         String          @db.Uuid
+  sku                 String          @db.VarChar(80)
+  label               String          @db.VarChar(140)
+  lineType            InvoiceLineType
+  membershipPlanId    String?         @db.Uuid
+  creditPackId        String?         @db.Uuid
+  unitAmount          Decimal         @db.Decimal(12, 2)
+  taxAmount           Decimal         @default(0) @db.Decimal(12, 2)
+  isTaxInclusive      Boolean         @default(false)
+  createdAt           DateTime        @default(now())
+  priceBook           PriceBook       @relation(fields: [priceBookId], references: [id], onDelete: Cascade)
+  membershipPlan      MembershipPlan? @relation(fields: [membershipPlanId], references: [id], onDelete: SetNull)
+  creditPack          CreditPack?     @relation(fields: [creditPackId], references: [id], onDelete: SetNull)
+  invoiceLineItems    InvoiceLineItem[]
+  bookings            Booking[]
+
+  @@unique([priceBookId, sku])
+  @@index([membershipPlanId])
+  @@index([creditPackId])
+}
+
+model Invoice {
+  id                        String          @id @default(uuid()) @db.Uuid
+  invoiceNumber             String          @unique @db.VarChar(40)
+  userId                    String?         @db.Uuid
+  status                    InvoiceStatus   @default(DRAFT)
+  currency                  String          @default("USD") @db.Char(3)
+  priceBookCodeSnapshot     String?         @db.VarChar(50)
+  priceBookVersionSnapshot  Int?
+  priceBookId               String?         @db.Uuid
+  subtotalAmountSnapshot    Decimal         @default(0) @db.Decimal(12, 2)
+  discountAmountSnapshot    Decimal         @default(0) @db.Decimal(12, 2)
+  taxAmountSnapshot         Decimal         @default(0) @db.Decimal(12, 2)
+  totalAmountSnapshot       Decimal         @default(0) @db.Decimal(12, 2)
+  amountPaid                Decimal         @default(0) @db.Decimal(12, 2)
+  balanceDue                Decimal         @default(0) @db.Decimal(12, 2)
+  issuedAt                  DateTime?
+  dueAt                     DateTime?
+  paidAt                    DateTime?
+  billingNameCiphertext     String?         @db.Text
+  billingNameIv             String?         @db.VarChar(64)
+  billingAddressCiphertext  String?         @db.Text
+  billingAddressIv          String?         @db.VarChar(64)
+  notesCiphertext           String?         @db.Text
+  notesIv                   String?         @db.VarChar(64)
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  customer                  User?           @relation("InvoiceCustomer", fields: [userId], references: [id], onDelete: SetNull)
+  priceBook                 PriceBook?      @relation(fields: [priceBookId], references: [id], onDelete: SetNull)
+  lineItems                 InvoiceLineItem[]
+  payments                  Payment[]
+  discountOverrides         DiscountOverride[]
+  bookings                  Booking[]
+
+  @@index([userId, status, issuedAt])
+  @@index([priceBookId])
+}
+
+model InvoiceLineItem {
+  id                        String          @id @default(uuid()) @db.Uuid
+  invoiceId                 String          @db.Uuid
+  lineNumber                Int
+  lineType                  InvoiceLineType
+  description               String          @db.VarChar(255)
+  quantity                  Decimal         @default(1) @db.Decimal(10, 2)
+  unitAmountSnapshot        Decimal         @db.Decimal(12, 2)
+  discountAmountSnapshot    Decimal         @default(0) @db.Decimal(12, 2)
+  taxAmountSnapshot         Decimal         @default(0) @db.Decimal(12, 2)
+  lineTotalSnapshot         Decimal         @db.Decimal(12, 2)
+  sourcePriceBookCode       String?         @db.VarChar(50)
+  sourcePriceBookVersion    Int?
+  sourcePriceBookItemId     String?         @db.Uuid
+  sourceReferenceType       String?         @db.VarChar(50)
+  sourceReferenceId         String?         @db.Uuid
+  createdAt                 DateTime        @default(now())
+  invoice                   Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  sourcePriceBookItem       PriceBookItem?  @relation(fields: [sourcePriceBookItemId], references: [id], onDelete: SetNull)
+  discountOverrides         DiscountOverride[]
+
+  @@unique([invoiceId, lineNumber])
+  @@index([invoiceId])
+  @@index([sourceReferenceType, sourceReferenceId])
+}
+
+model Payment {
+  id                        String          @id @default(uuid()) @db.Uuid
+  invoiceId                 String?         @db.Uuid
+  walletTransactionId       String?         @unique @db.Uuid
+  recordedByUserId          String?         @db.Uuid
+  method                    PaymentMethod
+  status                    PaymentStatus   @default(PENDING)
+  amount                    Decimal         @db.Decimal(12, 2)
+  currency                  String          @default("USD") @db.Char(3)
+  referenceNumber           String?         @db.VarChar(100)
+  checkNumberHash           String?         @db.VarChar(128)
+  cardBrandCiphertext       String?         @db.Text
+  cardBrandIv               String?         @db.VarChar(64)
+  cardLast4Hash             String?         @db.VarChar(128)
+  cardAuthCodeCiphertext    String?         @db.Text
+  cardAuthCodeIv            String?         @db.VarChar(64)
+  notesCiphertext           String?         @db.Text
+  notesIv                   String?         @db.VarChar(64)
+  receivedAt                DateTime?
+  settledAt                 DateTime?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  invoice                   Invoice?        @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  walletTransaction         WalletTransaction? @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
+  recordedBy                User?           @relation("PaymentRecorder", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId, status])
+  @@index([method, receivedAt])
+}
+
+model DiscountOverride {
+  id                        String            @id @default(uuid()) @db.Uuid
+  invoiceId                 String?           @db.Uuid
+  invoiceLineItemId         String?           @db.Uuid
+  scope                     DiscountScope
+  valueType                 DiscountValueType
+  label                     String            @db.VarChar(120)
+  reason                    String            @db.VarChar(255)
+  percentageValue           Decimal?          @db.Decimal(5, 2)
+  fixedAmount               Decimal?          @db.Decimal(12, 2)
+  currency                  String?           @db.Char(3)
+  approvedByUserId          String?           @db.Uuid
+  createdByUserId           String?           @db.Uuid
+  approvedAt                DateTime?
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  invoice                   Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceLineItem           InvoiceLineItem?  @relation(fields: [invoiceLineItemId], references: [id], onDelete: Cascade)
+  approvedBy                User?             @relation("DiscountApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  createdBy                 User?             @relation("DiscountCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([scope, createdAt])
+  @@index([invoiceId])
+  @@index([invoiceLineItemId])
+}
+
+model Booking {
+  id                String         @id @default(uuid()) @db.Uuid
+  userId            String         @db.Uuid
+  createdByUserId   String?        @db.Uuid
+  invoiceId         String?        @db.Uuid
+  priceBookId       String?        @db.Uuid
+  priceBookItemId   String?        @db.Uuid
+  resourceKey       String         @db.VarChar(100)
+  startAt           DateTime       @db.Timestamptz(6)
+  endAt             DateTime       @db.Timestamptz(6)
+  status            BookingStatus  @default(PENDING)
+  source            BookingSource  @default(STAFF)
+  partySize         Int            @default(1)
+  notesCiphertext   String?        @db.Text
+  notesIv           String?        @db.VarChar(64)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  customer          User           @relation("BookingCustomer", fields: [userId], references: [id], onDelete: Restrict)
+  createdBy         User?          @relation("BookingCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  invoice           Invoice?       @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  priceBook         PriceBook?     @relation(fields: [priceBookId], references: [id], onDelete: SetNull)
+  priceBookItem     PriceBookItem? @relation(fields: [priceBookItemId], references: [id], onDelete: SetNull)
+  waitlistEntries   Waitlist[]
+  workflowRuns      WorkflowRun[]
+
+  @@index([userId, startAt])
+  @@index([resourceKey, startAt, endAt])
+  @@index([status, startAt])
+  @@index([invoiceId])
+}
+
+model Waitlist {
+  id                String         @id @default(uuid()) @db.Uuid
+  userId            String         @db.Uuid
+  bookingId         String?        @db.Uuid
+  resourceKey       String         @db.VarChar(100)
+  desiredStartAt    DateTime       @db.Timestamptz(6)
+  desiredEndAt      DateTime       @db.Timestamptz(6)
+  queueDate         DateTime       @db.Date
+  queuePosition     Int            @default(0)
+  status            WaitlistStatus @default(WAITING)
+  contactCiphertext String?        @db.Text
+  contactIv         String?        @db.VarChar(64)
+  notesCiphertext   String?        @db.Text
+  notesIv           String?        @db.VarChar(64)
+  offeredAt         DateTime?
+  convertedAt       DateTime?
+  expiresAt         DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  user              User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  booking           Booking?       @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([resourceKey, queueDate, queuePosition])
+  @@index([resourceKey, queueDate, status, queuePosition])
+  @@index([userId, status])
+}
+
+model Recipe {
+  id                  String          @id @default(uuid()) @db.Uuid
+  authorId            String?         @db.Uuid
+  code                String          @unique @db.VarChar(50)
+  name                String          @db.VarChar(140)
+  description         String?         @db.Text
+  yieldAmount         Decimal?        @db.Decimal(10, 2)
+  yieldUnit           String?         @db.VarChar(30)
+  prepTimeSeconds     Int?
+  cookTimeSeconds     Int?
+  holdTimeSeconds     Int?
+  status              RecipeStatus    @default(DRAFT)
+  version             Int             @default(1)
+  internalNotesCiphertext String?     @db.Text
+  internalNotesIv     String?         @db.VarChar(64)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  author              User?           @relation("RecipeAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  steps               RecipeStep[]
+  workflowRuns        WorkflowRun[]
+
+  @@index([status])
+}
+
+model RecipeStep {
+  id                    String      @id @default(uuid()) @db.Uuid
+  recipeId              String      @db.Uuid
+  phaseNumber           Int
+  positionInPhase       Int
+  title                 String      @db.VarChar(140)
+  instructionCiphertext String?     @db.Text
+  instructionIv         String?     @db.VarChar(64)
+  durationSeconds       Int?
+  waitSeconds           Int?
+  isBlocking            Boolean     @default(true)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+  recipe                Recipe      @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  workflowRunSteps      WorkflowRunStep[]
+
+  @@unique([recipeId, phaseNumber, positionInPhase])
+  @@index([recipeId, phaseNumber])
+}
+
+model WorkflowRun {
+  id                    String              @id @default(uuid()) @db.Uuid
+  recipeId              String              @db.Uuid
+  bookingId             String?             @db.Uuid
+  operatorUserId        String?             @db.Uuid
+  startedAt             DateTime?
+  completedAt           DateTime?
+  scheduledStartAt      DateTime?
+  status                WorkflowRunStatus   @default(PLANNED)
+  currentPhaseNumber    Int?
+  recipeVersionSnapshot Int
+  contextJson           Json?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  recipe                Recipe              @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  booking               Booking?            @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  operator              User?               @relation("WorkflowOperator", fields: [operatorUserId], references: [id], onDelete: SetNull)
+  steps                 WorkflowRunStep[]
+
+  @@index([recipeId, status])
+  @@index([bookingId])
+  @@index([status, scheduledStartAt])
+}
+
+model WorkflowRunStep {
+  id                    String                @id @default(uuid()) @db.Uuid
+  workflowRunId         String                @db.Uuid
+  recipeStepId          String?               @db.Uuid
+  phaseNumber           Int
+  positionInPhase       Int
+  titleSnapshot         String                @db.VarChar(140)
+  durationSeconds       Int?
+  waitSeconds           Int?
+  status                WorkflowRunStepStatus @default(PENDING)
+  readyAt               DateTime?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  workflowRun           WorkflowRun           @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  recipeStep            RecipeStep?           @relation(fields: [recipeStepId], references: [id], onDelete: SetNull)
+
+  @@unique([workflowRunId, phaseNumber, positionInPhase])
+  @@index([workflowRunId, status, phaseNumber])
+}
+
+model Notification {
+  id                    String             @id @default(uuid()) @db.Uuid
+  userId                String?            @db.Uuid
+  channel               NotificationChannel
+  status                NotificationStatus @default(QUEUED)
+  templateKey           String?            @db.VarChar(80)
+  subject               String?            @db.VarChar(200)
+  payloadJson           Json?
+  bodyCiphertext        String?            @db.Text
+  bodyIv                String?            @db.VarChar(64)
+  destinationHash       String?            @db.VarChar(128)
+  destinationCiphertext String?            @db.Text
+  destinationIv         String?            @db.VarChar(64)
+  scheduledFor          DateTime?
+  sentAt                DateTime?
+  failedAt              DateTime?
+  failureReason         String?            @db.VarChar(255)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  user                  User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([status, scheduledFor])
+  @@index([channel, status, createdAt])
+}
+
+model AuditLog {
+  id                    String      @id @default(uuid()) @db.Uuid
+  actorUserId           String?     @db.Uuid
+  action                AuditAction
+  entityType            String      @db.VarChar(80)
+  entityId              String?     @db.Uuid
+  entityLabel           String?     @db.VarChar(140)
+  requestId             String?     @db.VarChar(100)
+  ipHash                String?     @db.VarChar(128)
+  userAgentCiphertext   String?     @db.Text
+  userAgentIv           String?     @db.VarChar(64)
+  beforeJson            Json?
+  afterJson             Json?
+  sensitiveCiphertext   String?     @db.Text
+  sensitiveIv           String?     @db.VarChar(64)
+  createdAt             DateTime    @default(now())
+  actor                 User?       @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([requestId])
+}
+
+model WebhookConfig {
+  id                      String        @id @default(uuid()) @db.Uuid
+  createdByUserId         String?       @db.Uuid
+  name                    String        @db.VarChar(120)
+  eventKey                String        @db.VarChar(80)
+  status                  WebhookStatus @default(ACTIVE)
+  endpointHash            String        @db.VarChar(128)
+  endpointCiphertext      String        @db.Text
+  endpointIv              String?       @db.VarChar(64)
+  signingSecretCiphertext String?       @db.Text
+  signingSecretIv         String?       @db.VarChar(64)
+  timeoutSeconds          Int           @default(10)
+  maxRetries              Int           @default(5)
+  headersJson             Json?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  createdBy               User?         @relation("WebhookCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  logs                    WebhookLog[]
+
+  @@index([eventKey, status])
+  @@index([endpointHash])
+}
+
+model WebhookLog {
+  id                     String                @id @default(uuid()) @db.Uuid
+  webhookConfigId        String                @db.Uuid
+  deliveryStatus         WebhookDeliveryStatus @default(PENDING)
+  eventKey               String                @db.VarChar(80)
+  attemptNumber          Int                   @default(1)
+  requestHeadersJson     Json?
+  requestBodyCiphertext  String?               @db.Text
+  requestBodyIv          String?               @db.VarChar(64)
+  responseHeadersJson    Json?
+  responseBodyCiphertext String?               @db.Text
+  responseBodyIv         String?               @db.VarChar(64)
+  responseStatusCode     Int?
+  errorMessage           String?               @db.VarChar(255)
+  requestedAt            DateTime              @default(now())
+  respondedAt            DateTime?
+  createdAt              DateTime              @default(now())
+  webhookConfig          WebhookConfig         @relation(fields: [webhookConfigId], references: [id], onDelete: Cascade)
+
+  @@index([webhookConfigId, requestedAt])
+  @@index([deliveryStatus, requestedAt])
+  @@index([eventKey, deliveryStatus, requestedAt])
+}

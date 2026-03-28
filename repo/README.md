@@ -69,4 +69,17 @@ This scaffold is HTTP-first for local development, but it is ready to be fronted
 ## Current Scope
 
 - Included: project structure, tooling, container orchestration, base runtime wiring.
+- Included: Prisma schema + initial SQL migration for users/roles, pricing, invoices, payments, wallets, and discount overrides.
 - Intentionally excluded: business logic, API endpoints, UI pages.
+
+## Database Migrations
+
+- Prisma schema: `backend/prisma/schema.prisma`
+- Initial migration: `backend/prisma/migrations/20260328130000_initial_billing_core/migration.sql`
+- Booking/waitlist/workflow migration: `backend/prisma/migrations/20260328143000_booking_waitlist_workflow/migration.sql`
+- Notifications/audit/webhooks migration: `backend/prisma/migrations/20260328153000_notifications_audit_webhooks/migration.sql`
+- Run local dev migration from `backend/`:
+
+```bash
+npm run prisma:migrate:dev
+```
