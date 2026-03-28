@@ -110,3 +110,51 @@ npm run prisma:migrate:dev
   - `METHOD\nPATH\nTIMESTAMP\nNONCE\nUSER_ID_OR_EMPTY\nSHA256(STABLE_JSON_BODY)`
 - Replay protection stores nonce scopes (`user:<id>` or `ip:<ip>`) and rejects reused nonces.
 - Idempotency for booking/billing action paths requires `Idempotency-Key` and stores request/response outcomes for safe replay.
+
+## Booking API (Part 1)
+
+- Routes:
+  - `GET /bookings/availability?sessionKey=<key>&startAt=<iso>&endAt=<iso>&capacity=<int>`
+  - `POST /bookings`
+- `POST /bookings` request body:
+  - `sessionKey` (logical class/session id)
+  - `seatKey` (seat/resource unit inside the session)
+  - `startAt`, `endAt` (ISO timestamps)
+  - `capacity` (session capacity)
+  - optional: `partySize`, `invoiceId`, `priceBookId`, `priceBookItemId`, `notes`
+- Resource key convention: booking seat resource is stored as `sessionKey::seatKey`.
+- Overlap prevention:
+  - API pre-check blocks overlapping active bookings for the same seat/resource.
+  - DB exclusion constraint remains the final guard for overlaps on the same resource.
+- Capacity handling: counts active bookings for exact session slot (`sessionKey` + exact `startAt`/`endAt`) and blocks when full.
+- Member priority rule: users with role `MEMBER` can book 24 hours earlier than non-members.
+  - Configurable via `BOOKING_OPEN_HOURS_NON_MEMBER` and `BOOKING_MEMBER_EARLY_ACCESS_HOURS`.
+
+## Booking API (Part 2)
+
+- Waitlist routes:
+  - `POST /bookings/waitlist` (join queue)
+  - `GET /bookings/waitlist?sessionKey=<key>&startAt=<iso>&endAt=<iso>`
+- Auto-promotion triggers:
+  - `POST /bookings/:bookingId/cancel` (cancels active booking and auto-promotes next waitlisted user)
+  - `POST /bookings/promote-next` (admin-triggered promotion for seat opening/capacity or manual operations)
+- FIFO scope used: queue per session-slot key (`sessionKey + startAt`) and ordered by `queuePosition`, then `createdAt`.
+- Promotion rules:
+  - next `WAITING` entry is considered first (strict FIFO)
+  - booking window/member policy is re-evaluated before promotion
+  - promotion creates a confirmed booking for the opened seat and marks waitlist entry as `CONVERTED`
+
+## Booking API (Part 3)
+
+- Reschedule route:
+  - `POST /bookings/:bookingId/reschedule`
+  - validates booking activity + actor authorization + target window/capacity/seat overlap using booking policy rules
+  - when reschedule succeeds, the old slot vacancy triggers FIFO auto-promotion from waitlist
+- Cancellation routes:
+  - Preview: `GET /bookings/:bookingId/cancellation-preview?baseAmount=<optional>`
+  - Confirm: `POST /bookings/:bookingId/cancel-confirm`
+  - Backward-compatible alias: `POST /bookings/:bookingId/cancel`
+- Cancellation fee policy (implemented exactly with explicit boundaries):
+  - `> 24h` before start: `0%` fee
+  - `<= 24h` and `>= 2h` before start: `50%` fee
+  - `< 2h` before start: `100%` fee
