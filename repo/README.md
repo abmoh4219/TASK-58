@@ -82,6 +82,9 @@ This scaffold is HTTP-first for local development, but it is ready to be fronted
 - Security hardening migration: `backend/prisma/migrations/20260328183000_security_rbac_lockout_rate_limit/migration.sql`
 - Signed request/idempotency migration: `backend/prisma/migrations/20260328193000_signed_requests_idempotency/migration.sql`
 - Billing membership/credits migration: `backend/prisma/migrations/20260328203000_billing_membership_credits_wallet_pricing/migration.sql`
+- Workflow recipe cue migration: `backend/prisma/migrations/20260328214500_workflow_recipe_cues/migration.sql`
+- Workflow run timers/pause migration: `backend/prisma/migrations/20260328230000_workflow_run_timers_pause_resume/migration.sql`
+- Workflow run events/rollback migration: `backend/prisma/migrations/20260329000000_workflow_run_events_rollback/migration.sql`
 - Run local dev migration from `backend/`:
 
 ```bash
@@ -215,3 +218,60 @@ npm run prisma:migrate:dev
   - Issued invoice amounts/lines are not edited, preserving invoice immutability.
 - Due dates:
   - Invoice due date can be set on issuance (`dueAt`); if omitted, defaults from `INVOICE_DUE_DAYS` (default 14).
+
+## Workflow Engine (Part 1)
+
+- Materialization endpoints:
+  - `GET /workflows/recipes/:recipeId/timeline?version=<optional-int>`
+  - `POST /workflows/recipes/:recipeId/materialize`
+- Source model:
+  - Uses `Recipe` + `RecipeStep` data.
+  - `phaseNumber` controls sequential phase order.
+  - Steps inside the same phase are materialized as parallel branches.
+- Unified timeline representation:
+  - single `timeline.segments[]` structure with ordered phase segments
+  - each segment contains parallel `branches[]`
+  - each branch contains ordered `nodes[]` of type `STEP` and optional `WAIT`
+- Wait-state behavior:
+  - `waitSeconds` becomes a `WAIT` node after step execution.
+  - if `isBlocking=false`, wait node is represented but does not delay next phase.
+- Temperature / heat cues:
+  - `RecipeStep.cueText`, `RecipeStep.targetTempC`, `RecipeStep.heatLevel` are included in node cues.
+
+## Workflow Engine (Part 2)
+
+- Workflow run state endpoints:
+  - `POST /workflows/runs`
+  - `GET /workflows/runs/active`
+  - `GET /workflows/runs/:runId`
+  - `POST /workflows/runs/:runId/pause`
+  - `POST /workflows/runs/:runId/resume`
+  - `POST /workflows/runs/:runId/tick`
+  - `POST /workflows/runs/:runId/steps/:runStepId/complete`
+  - `POST /workflows/runs/:runId/steps/:runStepId/skip`
+- Durable run-state model:
+  - `WorkflowRun` is linked to operator user, recipe, optional booking.
+  - `WorkflowRunStep` stores per-step status and timing fields including `timerTargetAt` and `pausedRemainingSeconds`.
+- Automatic timer transitions:
+  - timed steps persist `timerTargetAt`; `/tick` advances due steps and phase transitions.
+- Pause/resume behavior:
+  - pause captures remaining seconds per running step.
+  - resume restores timers without losing step/phase position.
+- Completion/skip durability:
+  - steps are marked `COMPLETED` or `SKIPPED` in persistent run-step records.
+
+## Workflow Engine (Part 3)
+
+- Rollback endpoint:
+  - `POST /workflows/runs/:runId/steps/:runStepId/rollback`
+- Rollback rule implemented:
+  - target step must be previously `COMPLETED`
+  - target step is restored to active execution position
+  - subsequent progressed steps (completed/skipped/running/ready after target order) are invalidated back to `PENDING`
+  - run status is restored to `RUNNING` and prior `completedAt` is cleared
+- Event persistence for analytics (append-only):
+  - `WorkflowRunEvent` table stores `STEP_COMPLETED`, `STEP_SKIPPED`, `STEP_ROLLBACK`
+  - events include run/step/user links, event type, JSON payload, and timestamp
+- Analytics read endpoint:
+  - `GET /workflows/events?runId=&userId=&stepId=&types=&from=&to=&limit=`
+  - supports filtering by user, run, time window, step, and event type list

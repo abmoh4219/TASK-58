@@ -138,6 +138,12 @@ enum WorkflowRunStepStatus {
   CANCELED
 }
 
+enum WorkflowRunEventType {
+  STEP_COMPLETED
+  STEP_SKIPPED
+  STEP_ROLLBACK
+}
+
 enum NotificationChannel {
   EMAIL
   SMS
@@ -225,6 +231,7 @@ model User {
   idempotencyKeys IdempotencyKey[]
   membershipEnrollments MembershipEnrollment[]
   creditPackGrants CreditPackGrant[]
+  workflowRunEvents WorkflowRunEvent[] @relation("WorkflowEventActor")
 
   @@index([status])
   @@index([createdAt])
@@ -580,6 +587,9 @@ model RecipeStep {
   title                 String      @db.VarChar(140)
   instructionCiphertext String?     @db.Text
   instructionIv         String?     @db.VarChar(64)
+  cueText               String?     @db.VarChar(255)
+  targetTempC           Int?
+  heatLevel             String?     @db.VarChar(32)
   durationSeconds       Int?
   waitSeconds           Int?
   isBlocking            Boolean     @default(true)
@@ -610,6 +620,7 @@ model WorkflowRun {
   booking               Booking?            @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   operator              User?               @relation("WorkflowOperator", fields: [operatorUserId], references: [id], onDelete: SetNull)
   steps                 WorkflowRunStep[]
+  events                WorkflowRunEvent[]
 
   @@index([recipeId, status])
   @@index([bookingId])
@@ -627,15 +638,36 @@ model WorkflowRunStep {
   waitSeconds           Int?
   status                WorkflowRunStepStatus @default(PENDING)
   readyAt               DateTime?
+  timerTargetAt         DateTime?
+  pausedRemainingSeconds Int?
   startedAt             DateTime?
   completedAt           DateTime?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   workflowRun           WorkflowRun           @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
   recipeStep            RecipeStep?           @relation(fields: [recipeStepId], references: [id], onDelete: SetNull)
+  events                WorkflowRunEvent[]
 
   @@unique([workflowRunId, phaseNumber, positionInPhase])
   @@index([workflowRunId, status, phaseNumber])
+}
+
+model WorkflowRunEvent {
+  id                String               @id @default(uuid()) @db.Uuid
+  workflowRunId     String               @db.Uuid
+  workflowRunStepId String?              @db.Uuid
+  actorUserId       String?              @db.Uuid
+  eventType         WorkflowRunEventType
+  eventData         Json?
+  createdAt         DateTime             @default(now())
+  workflowRun       WorkflowRun          @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  workflowRunStep   WorkflowRunStep?     @relation(fields: [workflowRunStepId], references: [id], onDelete: SetNull)
+  actor             User?                @relation("WorkflowEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([workflowRunId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([workflowRunStepId, createdAt])
+  @@index([eventType, createdAt])
 }
 
 model Notification {
