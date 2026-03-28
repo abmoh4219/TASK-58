@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Framework/build outputs
+.next/
+.svelte-kit/
+dist/
+build/
+coverage/
+.turbo/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/Editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Databases and generated artifacts
+*.sqlite
+prisma/migrations/_shadow*
+backend/prisma/generated/
+
+# Frontend hosting/build artifacts
+frontend/.vercel/
+
+# Docker and local runtime artifacts
+*.pid
+*.seed
+tmp/
+.cache/
