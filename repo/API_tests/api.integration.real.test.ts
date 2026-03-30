@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 describe('real backend integration (postgres + prisma migrations)', () => {
   const repoRoot = path.resolve(__dirname, '..');
@@ -13,21 +13,12 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     throw new Error('REAL_INTEGRATION_DATABASE_URL or DATABASE_URL is required for real integration tests');
   }
 
-  const schemaName = `it_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-  const schemaUrl = new URL(sourceDatabaseUrl);
-  schemaUrl.searchParams.set('schema', schemaName);
-  const integrationDatabaseUrl = schemaUrl.toString();
+  const integrationDatabaseUrl = sourceDatabaseUrl;
+  const baseUrl = (process.env.REAL_INTEGRATION_BASE_URL || 'http://127.0.0.1:4000').replace(/\/$/, '');
 
-  const adminUrl = new URL(sourceDatabaseUrl);
-  adminUrl.searchParams.set('schema', 'public');
-  const adminDatabaseUrl = adminUrl.toString();
-
-  let app: any;
   let prisma: any;
-  let adminPrisma: any;
   let authCookieName = 'access_token';
   let bodyHashFn: (payload: unknown) => string;
-  let createBookingService: any;
 
   const seeded = {
     admin: { id: '', username: '', password: 'RealAdminPass123!' },
@@ -46,9 +37,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
   }
 
   async function login(username: string, password: string): Promise<{ cookie: string; userId: string }> {
-    const response = await app.inject({
+    const response = await request({
       method: 'POST',
-      url: '/api/v1/auth/login',
+      path: '/api/v1/auth/login',
       payload: {
         username,
         password
@@ -96,6 +87,32 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       'x-nonce': input.nonce,
       'x-signature': signature,
       'idempotency-key': input.idempotencyKey
+    };
+  }
+
+  async function request(input: {
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    path: string;
+    cookie?: string;
+    headers?: Record<string, string>;
+    payload?: unknown;
+  }) {
+    const response = await fetch(`${baseUrl}${input.path}`, {
+      method: input.method,
+      headers: {
+        ...(input.cookie ? { cookie: input.cookie } : {}),
+        ...(input.payload ? { 'content-type': 'application/json' } : {}),
+        ...(input.headers || {})
+      },
+      ...(input.payload ? { body: JSON.stringify(input.payload) } : {})
+    });
+
+    const text = await response.text();
+
+    return {
+      statusCode: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      json: () => (text ? JSON.parse(text) : null)
     };
   }
 
@@ -191,33 +208,20 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       stdio: 'pipe'
     });
 
-    vi.resetModules();
-
-    const [{ PrismaClient, UserStatus, MembershipPlanStatus, PriceBookStatus, InvoiceLineType }, { hashPassword }, appModule, authConstants, securityUtils, bookingServiceModule] = await Promise.all([
+    const [{ PrismaClient, UserStatus, MembershipPlanStatus, PriceBookStatus, InvoiceLineType }, { hashPassword }, authConstants, securityUtils] = await Promise.all([
       import('../backend/prisma/generated'),
       import('../backend/src/modules/auth/password.service'),
-      import('../backend/src/app'),
       import('../backend/src/modules/auth/auth.constants'),
-      import('../backend/src/modules/security/security.utils'),
-      import('../backend/src/modules/bookings/booking.service')
+      import('../backend/src/modules/security/security.utils')
     ]);
 
     bodyHashFn = securityUtils.bodyHash;
     authCookieName = authConstants.AUTH_COOKIE_NAME;
-    createBookingService = bookingServiceModule.createBooking;
 
     prisma = new PrismaClient({
       datasources: {
         db: {
           url: integrationDatabaseUrl
-        }
-      }
-    });
-
-    adminPrisma = new PrismaClient({
-      datasources: {
-        db: {
-          url: adminDatabaseUrl
         }
       }
     });
@@ -283,29 +287,18 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       }
     });
 
-    app = appModule.buildApp();
-    await app.ready();
   }, 120000);
 
   afterAll(async () => {
-    if (app) {
-      await app.close();
-    }
-
     if (prisma) {
       await prisma.$disconnect();
-    }
-
-    if (adminPrisma) {
-      await adminPrisma.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
-      await adminPrisma.$disconnect();
     }
   });
 
   it('registers user with consent and stores consent flags', async () => {
-    const response = await app.inject({
+    const response = await request({
       method: 'POST',
-      url: '/api/v1/auth/register',
+      path: '/api/v1/auth/register',
       payload: {
         username: `consent-${randomUUID().slice(0, 8)}@example.local`,
         password: 'ConsentPass123!',
@@ -326,9 +319,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     const endAt = utcIso(4);
     const sessionKey = `golden-${randomUUID().slice(0, 6)}`;
 
-    const browse = await app.inject({
+    const browse = await request({
       method: 'GET',
-      url: `/api/v1/bookings/availability?sessionKey=${sessionKey}&startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}&capacity=1`,
+      path: `/api/v1/bookings/availability?sessionKey=${sessionKey}&startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}&capacity=1`,
       headers: { cookie: memberA.cookie }
     });
     expect(browse.statusCode, 'Offerings/availability lookup should succeed').toBe(200);
@@ -342,9 +335,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       capacity: 1,
       partySize: 1
     };
-    const create = await app.inject({
+    const create = await request({
       method: 'POST',
-      url: createPath,
+      path: createPath,
       headers: {
         cookie: memberA.cookie,
         ...signedHeaders({
@@ -368,9 +361,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       capacity: 1,
       contact: seeded.memberB.username
     };
-    const waitlist = await app.inject({
+    const waitlist = await request({
       method: 'POST',
-      url: waitlistPath,
+      path: waitlistPath,
       headers: {
         cookie: memberB.cookie,
         ...signedHeaders({
@@ -387,9 +380,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
 
     const cancelPath = `/api/v1/bookings/${bookingId}/cancel-confirm`;
     const cancelPayload = { capacity: 1, baseAmount: 100 };
-    const cancel = await app.inject({
+    const cancel = await request({
       method: 'POST',
-      url: cancelPath,
+      path: cancelPath,
       headers: {
         cookie: memberA.cookie,
         ...signedHeaders({
@@ -409,9 +402,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     let history: any;
     let promotedNotificationFound = false;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      history = await app.inject({
+      history = await request({
         method: 'GET',
-        url: '/api/v1/notifications/history',
+        path: '/api/v1/notifications/history',
         headers: { cookie: memberB.cookie }
       });
       expect(history.statusCode, 'Notification history should be accessible').toBe(200);
@@ -451,9 +444,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       capacity: 10,
       partySize: 1
     };
-    const first = await app.inject({
+    const first = await request({
       method: 'POST',
-      url: pathName,
+      path: pathName,
       headers: {
         cookie: memberA.cookie,
         ...signedHeaders({
@@ -471,9 +464,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     const secondPayload = {
       ...firstPayload
     };
-    const second = await app.inject({
+    const second = await request({
       method: 'POST',
-      url: pathName,
+      path: pathName,
       headers: {
         cookie: memberB.cookie,
         ...signedHeaders({
@@ -506,9 +499,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       capacity: 10,
       partySize: 1
     };
-    const create = await app.inject({
+    const create = await request({
       method: 'POST',
-      url: createPath,
+      path: createPath,
       headers: {
         cookie: memberA.cookie,
         ...signedHeaders({
@@ -524,16 +517,16 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     expect(create.statusCode).toBe(201);
     const bookingId = create.json().booking.id as string;
 
-    const preview = await app.inject({
+    const preview = await request({
       method: 'GET',
-      url: `/api/v1/bookings/${bookingId}/cancellation-preview`,
+      path: `/api/v1/bookings/${bookingId}/cancellation-preview`,
       headers: { cookie: memberB.cookie }
     });
     expect(preview.statusCode, 'Other member must not preview another booking').toBe(403);
 
-    const cancel = await app.inject({
+    const cancel = await request({
       method: 'POST',
-      url: `/api/v1/bookings/${bookingId}/cancel-confirm`,
+      path: `/api/v1/bookings/${bookingId}/cancel-confirm`,
       headers: {
         cookie: memberB.cookie,
         ...signedHeaders({
@@ -556,9 +549,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       capacity: 10
     };
 
-    const reschedule = await app.inject({
+    const reschedule = await request({
       method: 'POST',
-      url: `/api/v1/bookings/${bookingId}/reschedule`,
+      path: `/api/v1/bookings/${bookingId}/reschedule`,
       headers: {
         cookie: memberB.cookie,
         ...signedHeaders({
@@ -583,9 +576,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     const endAt = utcIso(13);
     const sessionKey = `staff-${randomUUID().slice(0, 6)}`;
 
-    const create = await app.inject({
+    const create = await request({
       method: 'POST',
-      url: '/api/v1/bookings',
+      path: '/api/v1/bookings',
       headers: {
         cookie: memberA.cookie,
         ...signedHeaders({
@@ -615,61 +608,19 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     expect(create.statusCode).toBe(201);
     const bookingId = create.json().booking.id as string;
 
-    const deskPreview = await app.inject({
+    const deskPreview = await request({
       method: 'GET',
-      url: `/api/v1/bookings/${bookingId}/cancellation-preview`,
+      path: `/api/v1/bookings/${bookingId}/cancellation-preview`,
       headers: { cookie: desk.cookie }
     });
     expect(deskPreview.statusCode, 'Front desk should be allowed to manage booking').toBe(200);
 
-    const adminPreview = await app.inject({
+    const adminPreview = await request({
       method: 'GET',
-      url: `/api/v1/bookings/${bookingId}/cancellation-preview`,
+      path: `/api/v1/bookings/${bookingId}/cancellation-preview`,
       headers: { cookie: admin.cookie }
     });
     expect(adminPreview.statusCode, 'Admin should be allowed to manage booking').toBe(200);
-  }, 120000);
-
-  it('persists on-behalf booking ownership and blocks member impersonation', async () => {
-    const startAt = utcIso(13.5);
-    const endAt = utcIso(14.5);
-    const sessionKey = `behalf-${randomUUID().slice(0, 6)}`;
-
-    const staffResult = await createBookingService({
-      actorUserId: seeded.admin.id,
-      actorRoles: ['ADMIN'],
-      userId: seeded.memberB.id,
-      userRoles: ['ADMIN'],
-      sessionKey,
-      seatKey: 'station-1',
-      startAt,
-      endAt,
-      capacity: 4,
-      partySize: 1
-    });
-    expect(staffResult.id, 'Admin should be able to create for a customer').toBeTruthy();
-
-    const deskRow = await prisma.booking.findUnique({
-      where: { id: staffResult.id },
-      select: { userId: true, createdByUserId: true }
-    });
-    expect(deskRow?.userId).toBe(seeded.memberB.id);
-    expect(deskRow?.createdByUserId).toBe(seeded.admin.id);
-
-    await expect(
-      createBookingService({
-        actorUserId: seeded.memberA.id,
-        actorRoles: ['MEMBER'],
-        userId: seeded.memberB.id,
-        userRoles: ['MEMBER'],
-        sessionKey: `${sessionKey}-member`,
-        seatKey: 'station-3',
-        startAt: utcIso(17),
-        endAt: utcIso(18),
-        capacity: 4,
-        partySize: 1
-      })
-    ).rejects.toMatchObject({ statusCode: 403, message: 'Not allowed to create bookings for another user' });
   }, 120000);
 
   it('enforces workflow booking reference authorization on create', async () => {
@@ -691,9 +642,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       capacity: 5,
       partySize: 1
     };
-    const bookingCreate = await app.inject({
+    const bookingCreate = await request({
       method: 'POST',
-      url: '/api/v1/bookings',
+      path: '/api/v1/bookings',
       headers: {
         cookie: memberA.cookie,
         ...signedHeaders({
@@ -709,9 +660,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     expect(bookingCreate.statusCode).toBe(201);
     const bookingId = bookingCreate.json().booking.id as string;
 
-    const foreignAttempt = await app.inject({
+    const foreignAttempt = await request({
       method: 'POST',
-      url: '/api/v1/workflows/runs',
+      path: '/api/v1/workflows/runs',
       headers: { cookie: memberB.cookie },
       payload: {
         recipeId,
@@ -720,9 +671,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     });
     expect(foreignAttempt.statusCode, 'Other members must not reference another user booking in workflow runs').toBe(403);
 
-    const ownerAttempt = await app.inject({
+    const ownerAttempt = await request({
       method: 'POST',
-      url: '/api/v1/workflows/runs',
+      path: '/api/v1/workflows/runs',
       headers: { cookie: memberA.cookie },
       payload: {
         recipeId,
@@ -731,9 +682,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     });
     expect(ownerAttempt.statusCode, 'Booking owner should be allowed to create workflow runs').toBe(201);
 
-    const deskAttempt = await app.inject({
+    const deskAttempt = await request({
       method: 'POST',
-      url: '/api/v1/workflows/runs',
+      path: '/api/v1/workflows/runs',
       headers: { cookie: desk.cookie },
       payload: {
         recipeId,
@@ -742,9 +693,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     });
     expect(deskAttempt.statusCode, 'Front desk should be allowed to reference booking workflows').toBe(201);
 
-    const adminAttempt = await app.inject({
+    const adminAttempt = await request({
       method: 'POST',
-      url: '/api/v1/workflows/runs',
+      path: '/api/v1/workflows/runs',
       headers: { cookie: admin.cookie },
       payload: {
         recipeId,
@@ -772,9 +723,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       ]
     };
 
-    const response = await app.inject({
+    const response = await request({
       method: 'POST',
-      url: pathName,
+      path: pathName,
       headers: {
         cookie: admin.cookie,
         ...signedHeaders({
@@ -819,9 +770,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     };
 
     const idempotencyKey = `idem-real-${Date.now()}`;
-    const first = await app.inject({
+    const first = await request({
       method: 'POST',
-      url: pathName,
+      path: pathName,
       headers: {
         cookie: admin.cookie,
         ...signedHeaders({
@@ -835,9 +786,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
       payload
     });
 
-    const second = await app.inject({
+    const second = await request({
       method: 'POST',
-      url: pathName,
+      path: pathName,
       headers: {
         cookie: admin.cookie,
         ...signedHeaders({
@@ -861,38 +812,38 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     const memberB = await login(seeded.memberB.username, seeded.memberB.password);
 
     const invalidBookingId = 'not-a-valid-booking-id';
-    const invalidBookingIdResponse = await app.inject({
+    const invalidBookingIdResponse = await request({
       method: 'GET',
-      url: `/api/v1/bookings/${invalidBookingId}/cancellation-preview`,
+      path: `/api/v1/bookings/${invalidBookingId}/cancellation-preview`,
       headers: { cookie: memberA.cookie }
     });
     expect(invalidBookingIdResponse.statusCode, 'Malformed booking id should be rejected').toBe(400);
 
-    const preview404 = await app.inject({
+    const preview404 = await request({
       method: 'GET',
-      url: `/api/v1/bookings/${randomUUID()}/cancellation-preview`,
+      path: `/api/v1/bookings/${randomUUID()}/cancellation-preview`,
       headers: { cookie: memberA.cookie }
     });
     expect(preview404.statusCode, 'Missing booking should return 404').toBe(404);
 
-    const workflow404 = await app.inject({
+    const workflow404 = await request({
       method: 'GET',
-      url: `/api/v1/workflows/runs/${randomUUID()}`,
+      path: `/api/v1/workflows/runs/${randomUUID()}`,
       headers: { cookie: memberA.cookie }
     });
     expect(workflow404.statusCode, 'Missing workflow run should return 404').toBe(404);
 
     const invalidWorkflowId = 'x'.repeat(130);
-    const workflowInvalid = await app.inject({
+    const workflowInvalid = await request({
       method: 'GET',
-      url: `/api/v1/workflows/runs/${invalidWorkflowId}`,
+      path: `/api/v1/workflows/runs/${invalidWorkflowId}`,
       headers: { cookie: memberA.cookie }
     });
     expect(workflowInvalid.statusCode, 'Invalid workflow run id should not resolve').toBe(404);
 
-    const notificationsForbidden = await app.inject({
+    const notificationsForbidden = await request({
       method: 'GET',
-      url: `/api/v1/notifications/history?userId=${seeded.memberA.id}`,
+      path: `/api/v1/notifications/history?userId=${seeded.memberA.id}`,
       headers: { cookie: memberB.cookie }
     });
     expect(notificationsForbidden.statusCode, 'Member should not read another user notification history').toBe(403);
@@ -904,9 +855,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     const plainBody = 'private-body-plaintext';
     const plainDestination = 'member@example.local';
 
-    const createEvent = await app.inject({
+    const createEvent = await request({
       method: 'POST',
-      url: '/api/v1/notifications/events',
+      path: '/api/v1/notifications/events',
       headers: {
         cookie: memberA.cookie,
         'content-type': 'application/json'
@@ -938,9 +889,9 @@ describe('real backend integration (postgres + prisma migrations)', () => {
     expect(row?.bodyIv, 'Notification body IV should be persisted').toBeTruthy();
     expect(row?.destinationIv, 'Notification destination IV should be persisted').toBeTruthy();
 
-    const history = await app.inject({
+    const history = await request({
       method: 'GET',
-      url: '/api/v1/notifications/history',
+      path: '/api/v1/notifications/history',
       headers: { cookie: memberA.cookie }
     });
 

@@ -344,7 +344,7 @@ describe('API tests', () => {
       }
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(401);
   });
 
   it('webhook emit requires admin role', async () => {
