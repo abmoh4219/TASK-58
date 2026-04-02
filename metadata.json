@@ -1,0 +1,9 @@
+{
+  "prompt": "Implement a Culinary Studio Operations & Recipe Coach Platform for an on-premise cooking school that sells memberships, schedules classes, and guides members through recipes in a hands-free kitchen environment. The Svelte web interface provides separate workspaces for Members, Instructors, Front Desk Staff, and Administrators. Members can browse offerings such as monthly memberships, single-seat group classes, personal coaching sessions, and value-added services, then book a time slot, join a waitlist when a class is full, reschedule within policy, or request cancellation with clear fee previews before confirming. During a cooking session, a member can select any recipe and generate a one-click executable workflow that breaks it into timed steps with parallel and sequential tasks, built-in waits (preheat, resting, marinating), and temperature/heat cues; the UI runs a unified timeline with automatic timers, supports step rollback to the prior completed step, and offers spoken step readouts using the device’s local text-to-speech engine plus large “Next/Back/Pause” controls for flour-safe operation. The in-app Notification Center shows templated messages for booking success, schedule changes, cancellations, waitlist promotion, and class reminders, with per-user mute controls and a history screen showing what was delivered and when. Staff dashboards provide growth reporting tailored to culinary learning, including recipe view volume, weekly consistency streaks, difficulty progression, completion accuracy (timers completed vs. skipped/rolled back), and interest distribution by cuisine tags, with drill-down by date range and permissioned export to a local file.",
+  "project_type": "fullstack",
+  "frontend_language": "TypeScript",
+  "backend_language": "TypeScript",
+  "frontend_framework": "svelte",
+  "backend_framework": "node.js",
+  "database": "PostgreSQL"
+}

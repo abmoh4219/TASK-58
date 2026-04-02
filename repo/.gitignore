@@ -40,3 +40,6 @@ frontend/.vercel/
 *.seed
 *.tmp/
 .cache/
+
+convert_ai_session.py
+session.jsonl
