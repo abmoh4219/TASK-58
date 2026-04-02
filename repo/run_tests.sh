@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-export DATABASE_URL="${DATABASE_URL:-postgresql://culinary_user:culinary_password@postgres:5432/culinary_studio?schema=public}"
+export DATABASE_URL="${DATABASE_URL:-postgresql://culinary_user:culinary_password@127.0.0.1:5432/culinary_studio?schema=public}"
 export REAL_INTEGRATION_DATABASE_URL="${REAL_INTEGRATION_DATABASE_URL:-$DATABASE_URL}"
 export REAL_INTEGRATION_BASE_URL="${REAL_INTEGRATION_BASE_URL:-http://127.0.0.1:4000}"
 export RUN_REAL_INTEGRATION="true"

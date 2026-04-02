@@ -129,6 +129,9 @@ import { AuthError } from '../backend/src/modules/auth/auth.service';
 import { buildApp } from '../backend/src/app';
 
 describe('API tests', () => {
+  process.env.SECURITY_ACTION_PATH_PREFIXES = '/bookings,/billing,/invoices,/payments';
+  process.env.SIGNED_REQUEST_SECRET = process.env.SIGNED_REQUEST_SECRET || 'test_signed_request_secret';
+  process.env.SIGNED_REQUEST_KEY_ID = process.env.SIGNED_REQUEST_KEY_ID || 'default';
   const app = buildApp();
 
   beforeAll(async () => {
