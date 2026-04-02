@@ -8,6 +8,12 @@ export RUN_REAL_INTEGRATION="true"
 export REDIS_URL="${REDIS_URL:-redis://redis:6379}"
 export JWT_ACCESS_SECRET="${JWT_ACCESS_SECRET:-test_access_secret}"
 export JWT_REFRESH_SECRET="${JWT_REFRESH_SECRET:-test_refresh_secret}"
+export SIGNED_REQUEST_SECRET="${SIGNED_REQUEST_SECRET:-qa_signed_request_secret_local_only}"
+export SIGNED_REQUEST_KEY_ID="${SIGNED_REQUEST_KEY_ID:-default}"
+export SIGNED_REQUEST_MAX_SKEW_SECONDS="${SIGNED_REQUEST_MAX_SKEW_SECONDS:-300}"
+export SIGNED_REQUEST_NONCE_TTL_SECONDS="${SIGNED_REQUEST_NONCE_TTL_SECONDS:-600}"
+export SECURITY_ACTION_PATH_PREFIXES="${SECURITY_ACTION_PATH_PREFIXES:-/bookings,/billing,/invoices,/payments}"
+export FIELD_ENCRYPTION_KEY="${FIELD_ENCRYPTION_KEY:-qa_field_encryption_key_32bytes!}"
 
 echo "[setup] Generating Prisma client for container runtime"
 npm exec --workspace backend prisma generate
