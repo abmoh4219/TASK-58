@@ -354,8 +354,22 @@ export async function createMembershipEnrollment(input: CreateMembershipEnrollme
       }
     });
 
+    const invoice = await issueEntitlementInvoiceTx(tx, {
+      userId: input.userId,
+      asOf: startsAt,
+      currency: 'USD',
+      lineType: InvoiceLineType.MEMBERSHIP_PLAN,
+      description: `Membership enrollment: plan ${input.membershipPlanId}`,
+      unitAmount: Number(pricing.priceItem.unitAmount),
+      sourcePriceBookItemId: pricing.priceItem.id,
+      sourceReferenceType: 'membership_plan',
+      sourceReferenceId: input.membershipPlanId,
+      priceBook: pricing.priceBook
+    });
+
     return {
       enrollment,
+      invoice,
       chargeSnapshot: {
         priceBookCode: pricing.priceBook.code,
         priceBookVersion: pricing.priceBook.version,
@@ -439,8 +453,22 @@ export async function renewMembership(input: RenewMembershipInput) {
       }
     });
 
+    const invoice = await issueEntitlementInvoiceTx(tx, {
+      userId: enrollment.userId,
+      asOf,
+      currency: 'USD',
+      lineType: InvoiceLineType.MEMBERSHIP_PLAN,
+      description: `Membership renewal: plan ${enrollment.membershipPlanId}`,
+      unitAmount: Number(pricing.priceItem.unitAmount),
+      sourcePriceBookItemId: pricing.priceItem.id,
+      sourceReferenceType: 'membership_plan',
+      sourceReferenceId: enrollment.membershipPlanId,
+      priceBook: pricing.priceBook
+    });
+
     return {
       enrollment: updated,
+      invoice,
       renewalSnapshot: {
         priceBookCode: pricing.priceBook.code,
         priceBookVersion: pricing.priceBook.version,
@@ -503,40 +531,56 @@ export async function purchaseCreditPack(input: PurchaseCreditPackInput) {
       ? new Date(asOf.getTime() + resolved.creditPack.expiresInDays * 24 * 60 * 60 * 1000)
       : null;
 
-  const grant = await prisma.creditPackGrant.create({
-    data: {
-      userId: input.userId,
-      creditPackId: input.creditPackId,
-      priceBookId: resolved.priceBook.id,
-      priceBookItemId: resolved.priceItem.id,
-      creditsTotal: resolved.creditPack.creditsAmount,
-      creditsRemaining: resolved.creditPack.creditsAmount,
-      grantedAt: asOf,
-      expiresAt
-    },
-    select: {
-      id: true,
-      userId: true,
-      creditPackId: true,
-      creditsTotal: true,
-      creditsRemaining: true,
-      grantedAt: true,
-      expiresAt: true,
-      createdAt: true
-    }
-  });
+  return prisma.$transaction(async (tx) => {
+    const grant = await tx.creditPackGrant.create({
+      data: {
+        userId: input.userId,
+        creditPackId: input.creditPackId,
+        priceBookId: resolved.priceBook.id,
+        priceBookItemId: resolved.priceItem.id,
+        creditsTotal: resolved.creditPack.creditsAmount,
+        creditsRemaining: resolved.creditPack.creditsAmount,
+        grantedAt: asOf,
+        expiresAt
+      },
+      select: {
+        id: true,
+        userId: true,
+        creditPackId: true,
+        creditsTotal: true,
+        creditsRemaining: true,
+        grantedAt: true,
+        expiresAt: true,
+        createdAt: true
+      }
+    });
 
-  return {
-    grant,
-    chargeSnapshot: {
-      priceBookCode: resolved.priceBook.code,
-      priceBookVersion: resolved.priceBook.version,
+    const invoice = await issueEntitlementInvoiceTx(tx, {
+      userId: input.userId,
+      asOf,
+      currency: 'USD',
+      lineType: InvoiceLineType.CREDIT_PACK,
+      description: `Credit pack purchase: ${resolved.creditPack.name}`,
       unitAmount: Number(resolved.priceItem.unitAmount),
-      taxAmount: Number(resolved.priceItem.taxAmount),
-      currency: resolved.priceBook.currency,
-      chargedAt: asOf
-    }
-  };
+      sourcePriceBookItemId: resolved.priceItem.id,
+      sourceReferenceType: 'credit_pack',
+      sourceReferenceId: input.creditPackId,
+      priceBook: resolved.priceBook
+    });
+
+    return {
+      grant,
+      invoice,
+      chargeSnapshot: {
+        priceBookCode: resolved.priceBook.code,
+        priceBookVersion: resolved.priceBook.version,
+        unitAmount: Number(resolved.priceItem.unitAmount),
+        taxAmount: Number(resolved.priceItem.taxAmount),
+        currency: resolved.priceBook.currency,
+        chargedAt: asOf
+      }
+    };
+  });
 }
 
 export async function getCreditBalance(input: { userId: string; asOf?: string }) {
@@ -953,6 +997,113 @@ function generateInvoiceNumber(): string {
   const d = String(now.getUTCDate()).padStart(2, '0');
   const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `INV-${y}${m}${d}-${suffix}`;
+}
+
+type EntitlementInvoiceInput = {
+  userId: string;
+  asOf: Date;
+  currency: string;
+  lineType: InvoiceLineType;
+  description: string;
+  unitAmount: number;
+  sourcePriceBookItemId: string;
+  sourceReferenceType: string;
+  sourceReferenceId: string;
+  priceBook: {
+    id: string;
+    code: string;
+    version: number;
+    currency: string;
+  };
+};
+
+async function issueEntitlementInvoiceTx(
+  tx: Prisma.TransactionClient,
+  input: EntitlementInvoiceInput
+) {
+  const rate = taxRate();
+  const subtotal = roundMoney(input.unitAmount);
+  const tax = roundMoney(subtotal * rate);
+  const total = roundMoney(subtotal + tax);
+  const dueAt = new Date(input.asOf.getTime() + defaultInvoiceDueDays() * 24 * 60 * 60 * 1000);
+
+  let invoiceNumber = generateInvoiceNumber();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const existing = await tx.invoice.findUnique({
+      where: { invoiceNumber },
+      select: { id: true }
+    });
+
+    if (!existing) {
+      break;
+    }
+
+    invoiceNumber = generateInvoiceNumber();
+  }
+
+  const invoice = await tx.invoice.create({
+    data: {
+      invoiceNumber,
+      userId: input.userId,
+      status: InvoiceStatus.DRAFT,
+      currency: input.currency,
+      priceBookId: input.priceBook.id,
+      priceBookCodeSnapshot: input.priceBook.code,
+      priceBookVersionSnapshot: input.priceBook.version,
+      subtotalAmountSnapshot: subtotal,
+      discountAmountSnapshot: 0,
+      taxAmountSnapshot: tax,
+      totalAmountSnapshot: total,
+      amountPaid: 0,
+      balanceDue: total,
+      issuedAt: input.asOf,
+      dueAt
+    },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      userId: true,
+      status: true,
+      totalAmountSnapshot: true,
+      balanceDue: true,
+      issuedAt: true,
+      dueAt: true,
+      createdAt: true
+    }
+  });
+
+  await tx.invoiceLineItem.create({
+    data: {
+      invoiceId: invoice.id,
+      lineNumber: 1,
+      lineType: input.lineType,
+      description: input.description,
+      quantity: 1,
+      unitAmountSnapshot: subtotal,
+      discountAmountSnapshot: 0,
+      taxAmountSnapshot: tax,
+      lineTotalSnapshot: total,
+      sourcePriceBookCode: input.priceBook.code,
+      sourcePriceBookVersion: input.priceBook.version,
+      sourcePriceBookItemId: input.sourcePriceBookItemId,
+      sourceReferenceType: input.sourceReferenceType,
+      sourceReferenceId: input.sourceReferenceId
+    }
+  });
+
+  await tx.invoice.update({
+    where: { id: invoice.id },
+    data: { status: InvoiceStatus.ISSUED }
+  });
+
+  return {
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    totalAmount: Number(invoice.totalAmountSnapshot),
+    balanceDue: Number(invoice.balanceDue),
+    issuedAt: invoice.issuedAt,
+    dueAt: invoice.dueAt
+  };
 }
 
 export async function issueInvoice(input: IssueInvoiceInput) {

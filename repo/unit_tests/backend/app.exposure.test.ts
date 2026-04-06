@@ -43,7 +43,7 @@ describe('operational exposure controls', () => {
     resetEnvCache();
   });
 
-  it('hides swagger docs and detailed readiness checks outside development', async () => {
+  it('requires authentication for swagger docs outside development', async () => {
     process.env.NODE_ENV = 'test';
     resetEnvCache();
     const app = buildApp();
@@ -51,9 +51,9 @@ describe('operational exposure controls', () => {
 
     const docs = await app.inject({
       method: 'GET',
-      url: '/api/docs'
+      url: '/api/docs/'
     });
-    expect(docs.statusCode).toBe(404);
+    expect(docs.statusCode).toBe(401);
 
     const readiness = await app.inject({
       method: 'GET',

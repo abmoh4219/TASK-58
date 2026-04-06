@@ -41,13 +41,32 @@
     return path === href || path.startsWith(`${href}/`);
   }
 
+  function resolveBrowserApiBaseUrl(): string {
+    const configured = data.publicApiBaseUrl;
+
+    if (typeof window === 'undefined') {
+      return configured;
+    }
+
+    try {
+      const url = new URL(configured);
+      if (url.hostname === 'backend' || url.hostname === 'localhost') {
+        url.hostname = window.location.hostname;
+        url.port = window.location.port || url.port;
+      }
+      return url.toString().replace(/\/$/, '');
+    } catch {
+      return `${window.location.origin}/api/v1`;
+    }
+  }
+
   async function signOut(): Promise<void> {
     if (signingOut) {
       return;
     }
 
     signingOut = true;
-    const apiBaseUrl = 'https://localhost:4000/api/v1';
+    const apiBaseUrl = resolveBrowserApiBaseUrl();
 
     try {
       const response = await fetch(`${apiBaseUrl}/auth/logout`, {

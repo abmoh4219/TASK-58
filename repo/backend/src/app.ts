@@ -47,34 +47,43 @@ export function buildApp() {
     credentials: true
   });
 
-  if (exposeOperationalDetails) {
-    app.register(swagger, {
-      stripBasePath: false,
-      openapi: {
-        openapi: '3.0.3',
-        info: {
-          title: 'Culinary Studio API',
-          description: 'Versioned backend APIs for operations, billing, workflows, notifications, and analytics.',
-          version: '1.0.0'
-        },
-        servers: [{ url: '/' }],
-        tags: [
-          { name: 'auth' },
-          { name: 'analytics' },
-          { name: 'billing' },
-          { name: 'bookings' },
-          { name: 'notifications' },
-          { name: 'webhooks' },
-          { name: 'workflows' },
-          { name: 'system' }
-        ]
-      }
-    });
+  app.register(swagger, {
+    stripBasePath: false,
+    openapi: {
+      openapi: '3.0.3',
+      info: {
+        title: 'Culinary Studio API',
+        description: 'Versioned backend APIs for operations, billing, workflows, notifications, and analytics.',
+        version: '1.0.0'
+      },
+      servers: [{ url: '/' }],
+      tags: [
+        { name: 'auth' },
+        { name: 'analytics' },
+        { name: 'billing' },
+        { name: 'bookings' },
+        { name: 'notifications' },
+        { name: 'webhooks' },
+        { name: 'workflows' },
+        { name: 'system' }
+      ]
+    }
+  });
 
-    app.register(swaggerUi, {
-      routePrefix: '/api/docs'
-    });
-  }
+  app.register(swaggerUi, {
+    routePrefix: '/api/docs',
+    uiHooks: !exposeOperationalDetails
+      ? {
+          onRequest: async (request: any, reply: any) => {
+            try {
+              await request.jwtVerify();
+            } catch {
+              return reply.code(401).send({ message: 'Unauthorized' });
+            }
+          }
+        }
+      : {}
+  });
 
   app.register(cookie, {
     hook: 'onRequest',

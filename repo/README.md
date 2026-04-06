@@ -82,14 +82,18 @@ docker compose build --no-cache
 docker compose up -d
 ```
 
-Optional strict LAN TLS profile (Caddy):
+TLS is enabled by default via Caddy reverse proxy. All traffic on ports 80/443 is TLS-terminated.
+Backend and frontend ports are not exposed to the host; traffic routes through Caddy only.
+
+For development without TLS (not recommended for production):
 
 ```bash
-docker compose --profile tls up -d
+docker compose --profile dev up -d
 ```
 
 TLS notes:
 
+- TLS is enforced by default on all LAN deployments.
 - Public/browser URLs should use HTTPS origins only.
 - Auth cookies are secure + httpOnly + sameSite=strict by default.
 - Signed/idempotent protected mutations are user-scoped and validated after JWT auth.

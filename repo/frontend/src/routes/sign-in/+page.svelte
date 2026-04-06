@@ -7,6 +7,10 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
 
+  import type { PageData } from './$types';
+
+  export let data: PageData;
+
   type FormState = 'idle' | 'loading' | 'success' | 'error';
 
   let username = '';
@@ -16,7 +20,7 @@
   let fieldErrors: { username?: string; password?: string } = {};
 
   function resolveBrowserApiBaseUrl(): string {
-    const configured = 'https://localhost:4000/api/v1';
+    const configured = data.publicApiBaseUrl;
 
     if (typeof window === 'undefined') {
       return configured;
@@ -24,12 +28,13 @@
 
     try {
       const url = new URL(configured);
-      if (url.hostname === 'backend') {
-        url.hostname = window.location.hostname || 'localhost';
+      if (url.hostname === 'backend' || url.hostname === 'localhost') {
+        url.hostname = window.location.hostname;
+        url.port = window.location.port || url.port;
       }
       return url.toString().replace(/\/$/, '');
     } catch {
-      return configured;
+      return `${window.location.origin}/api/v1`;
     }
   }
 

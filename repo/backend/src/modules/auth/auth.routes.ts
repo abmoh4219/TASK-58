@@ -49,6 +49,15 @@ const loginBodySchema = {
   }
 } as const;
 
+const consentUpdateBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['consentGranted'],
+  properties: {
+    consentGranted: { type: 'boolean' }
+  }
+} as const;
+
 export const authRoutes: FastifyPluginAsync = async (app) => {
   const config = getConfig();
 
@@ -195,7 +204,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   app.put<{ Params: { userId: string }; Body: ConsentUpdateBody }>(
     '/admin/users/:userId/consent',
     {
-      preHandler: requireRoles(['ADMIN'])
+      preHandler: requireRoles(['ADMIN']),
+      schema: {
+        body: consentUpdateBodySchema
+      }
     },
     async (request, reply) => {
       try {

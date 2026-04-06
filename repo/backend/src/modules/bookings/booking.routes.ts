@@ -104,6 +104,7 @@ const createBookingBodySchema = {
   additionalProperties: false,
   required: ['sessionKey', 'seatKey', 'startAt', 'endAt', 'capacity'],
   properties: {
+    userId: { type: 'string', format: 'uuid' },
     sessionKey: { type: 'string', minLength: 1, maxLength: 80 },
     seatKey: { type: 'string', minLength: 1, maxLength: 80 },
     startAt: isoDateTime,
