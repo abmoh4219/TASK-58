@@ -39,6 +39,8 @@ frontend/.vercel/
 *.seed
 *.tmp/
 .cache/
+.claude/
 
 convert_ai_session.py
 session.jsonl
+ses_2cd4d70acffe8eKrSnDRlMROn5.jsonl
